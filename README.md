@@ -29,7 +29,7 @@ func (t *MyEnum) Scan(v any) error  {
 
 ## Installation
 
-`go-enum-codegen` can be installed using the recommended [`tools.go` pattern](https://www.jvt.me/posts/2022/06/15/go-tools-dependency-management/)]
+`go-enum-codegen` can be installed using the recommended [`tools.go` pattern](https://www.jvt.me/posts/2022/06/15/go-tools-dependency-management/)
 so it can be managed alongside the rest of your module.
 
 To do so, create a file called `tools/tools.go` at the root of your module with the following contents:
@@ -92,13 +92,13 @@ Usage of go-enum-codegen:
 
 ## Examples
 
-You can find examples for several different scenarios in [./examples]
+You can find examples for several different scenarios in the [examples directory](./examples)
 
 ## To-Do
 
-- [] Homebrew formula
-- [] More tests
-- [] More docs
+- [ ] Homebrew formula
+- [ ] More tests
+- [ ] More docs
 
 ## Feature Requests, Bug Reports, Contributing, Etc.
 
