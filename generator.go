@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/format"
 	"golang.org/x/tools/go/packages"
+	"log"
 	"slices"
 	"strings"
 )
@@ -21,6 +22,7 @@ type Generator struct {
 	doScanValue bool
 	errOnUnk    bool
 	useString   bool
+	debug       bool
 
 	// per-type info
 	// reset after each run
@@ -37,6 +39,8 @@ func NewGenerator(opts ...Opt) *Generator {
 
 	g.options(opts...)
 	g.defaults()
+
+	g.logf("post-options fields: %#v", g)
 
 	return g
 }
@@ -71,6 +75,18 @@ func WithErrorOnUnknown() Opt {
 func WithUseStringer() Opt {
 	return func(g *Generator) {
 		g.useString = true
+	}
+}
+
+func WithDebug() Opt {
+	return func(g *Generator) {
+		g.debug = true
+	}
+}
+
+func (g *Generator) logf(format string, args ...interface{}) {
+	if g.debug {
+		log.Printf(format, args...)
 	}
 }
 
@@ -154,17 +170,19 @@ func (g *Generator) Format() ([]byte, error) {
 
 func (g *Generator) Generate(typeName string) error {
 	g.reset()
+	g.logf("reset values for Generate run for type %s", typeName)
 	values := make([]Value, 0, 100)
 	for _, file := range g.pkg.files {
 		file.typeName = typeName
 		file.values = nil
 		file.isStringer = false
-		file.noEmpty = false
+		file.hasUnset = false
 		if file.file != nil {
+			g.logf("inspecting file %s", file.file.Name)
 			ast.Inspect(file.file, file.GenDecl)
 			values = append(values, file.values...)
 		}
-		if file.noEmpty {
+		if file.hasUnset {
 			g.hasUnset = true
 		}
 	}
@@ -172,6 +190,8 @@ func (g *Generator) Generate(typeName string) error {
 	if len(values) == 0 {
 		return fmt.Errorf("no values defined for type %s", typeName)
 	}
+	g.logf("detected %d values", len(values))
+	g.logf("fields after processing type %s: %#v", typeName, g)
 
 	values = cuts.DedupeFunc(values, func(v Value) string {
 		return v.StrVal
@@ -187,12 +207,14 @@ func (g *Generator) Generate(typeName string) error {
 		recv = strings.ToLower(string(typeName[0]))
 	}
 	g.isStringer = values[0].IsStringer
+	g.logf("data for type %s: kind: %s, receiver: %s, isStringer: %t", typeName, kind, recv, g.isStringer)
 
 	if (kind == TypeSigned || kind == TypeUnsigned) && g.useString && !g.isStringer {
 		return fmt.Errorf("type %s does not implement fmt.Stringer", typeName)
 	}
 
 	g.writeImports(kind)
+	g.logf("wrote imports")
 
 	var defaultValue Value
 	if kind == TypeString {
@@ -207,17 +229,21 @@ func (g *Generator) Generate(typeName string) error {
 
 	if exists {
 		v := values[index]
+		g.logf("detected default value %#v", v)
 		g.defaultValue = &v
 		if !g.errOnUnk {
+			g.logf("removing default value from value list")
 			values = slices.Delete(values, index, index+1)
 		}
 	}
 
 	if g.doScanValue {
+		g.logf("starting sql.Scanner & driver.Valuer run")
 		g.writeScannerValuer(recv, values, kind, typeName)
 	}
 
 	if g.doJson {
+		g.logf("starting json.Marshaler and json.Unmarshaler run")
 		g.writeMarshalerUnmarshaler(recv, values, kind, typeName)
 	}
 
@@ -226,26 +252,36 @@ func (g *Generator) Generate(typeName string) error {
 
 func (g *Generator) writeScannerValuer(recv string, values []Value, kind ValueType, typeName string) {
 	assgnVar, convType := g.getReadAssignVarAndConvType(kind)
+	g.logf("using assignment variable %s and will convert to type %s for Scan method", assgnVar, convType)
 	g.Printf("// Scan implements sql.Scanner for %s\n", typeName)
 	g.Printf("func (%s *%s) Scan(value interface{}) error {\n", recv, typeName)
 	g.writeScannerTypeAssertionStmnt("scan", assgnVar, convType, typeName)
+	g.logf("wrote type assertion statement")
 	g.writeReadCaseStatement(recv, values, kind, assgnVar, typeName)
+	g.logf("wrote case statement")
 	g.writeReadDefaultCase("scan", recv, assgnVar, typeName)
+	g.logf("wrote default case statement")
 	g.writeReadCloser()
 	g.Printf("// Value implements driver.Valuer for %s\n", typeName)
 	g.writeValuerBody(recv, kind, typeName)
+	g.logf("wrote Value method")
 }
 
 func (g *Generator) writeMarshalerUnmarshaler(recv string, values []Value, kind ValueType, typeName string) {
 	assgnVar, convType := g.getReadAssignVarAndConvType(kind)
+	g.logf("using assignment variable %s and will convert to type %s for UnmarshalJSON method", assgnVar, convType)
 	g.Printf("// UnmarshalJSON implements json.Unmarshaler for %s\n", typeName)
 	g.Printf("func (%s *%s) UnmarshalJSON(data []byte) error {\n", recv, typeName)
 	g.writeUnmarshalerTypeConversionStmnt(assgnVar, convType, "unmarshal", typeName)
+	g.logf("wrote type conversion statement")
 	g.writeReadCaseStatement(recv, values, kind, assgnVar, typeName)
+	g.logf("wrote case statement")
 	g.writeReadDefaultCase("unmarshal", recv, assgnVar, typeName)
+	g.logf("wrote default case statement")
 	g.writeReadCloser()
 	g.Printf("// MarshalJSON implements json.Marshaler for %s\n", typeName)
 	g.writeMarshalerBody(recv, convType, typeName)
+	g.logf("wrote MarshalJSON method")
 }
 
 func (g *Generator) writeMarshalerBody(recv string, convType string, typeName string) {
@@ -254,10 +290,13 @@ func (g *Generator) writeMarshalerBody(recv string, convType string, typeName st
 	switch {
 	case g.useString && g.isStringer:
 		g.Printf("%s.String()", recv)
+		g.logf("returning %s.String(), nil for MarshalJSON", typeName)
 	case convType == "string":
 		g.Printf("%s", recv)
+		g.logf("returning %s, nil for MarshalJSON", typeName)
 	default:
 		g.Printf("fmt.Sprintf(\"%%d\", %s(%s))", convType, recv)
+		g.logf("returning fmt.Sprintf'd %s, nil for MarshalJSON", typeName)
 	}
 	g.Printf("), nil\n")
 	g.Printf("}\n\n")
@@ -270,18 +309,22 @@ func (g *Generator) writeValuerBody(recv string, kind ValueType, typeName string
 	case g.useString && g.isStringer:
 		_, _ = returnStmt.WriteString(recv)
 		_, _ = returnStmt.WriteString(".String()")
+		g.logf("Valuer will return %s.String()", typeName)
 	case kind == TypeString:
 		_, _ = returnStmt.WriteString("string(")
 		_, _ = returnStmt.WriteString(recv)
 		_, _ = returnStmt.WriteString(")")
+		g.logf("Valuer will return string(%s)", typeName)
 	case kind == TypeSigned:
 		_, _ = returnStmt.WriteString("int(")
 		_, _ = returnStmt.WriteString(recv)
 		_, _ = returnStmt.WriteString(")")
+		g.logf("Valuer will return int(%s)", typeName)
 	default:
 		_, _ = returnStmt.WriteString("uint(")
 		_, _ = returnStmt.WriteString(recv)
 		_, _ = returnStmt.WriteString(")")
+		g.logf("Valuer will return uint(%s)", typeName)
 	}
 	g.Printf("\treturn %s, nil\n", returnStmt.String())
 	g.Printf("}\n\n")
@@ -298,8 +341,10 @@ func (g *Generator) writeReadDefaultCase(method string, recv string, assgnVar st
 	g.Printf("\tdefault:\n")
 	switch {
 	case !g.errOnUnk && g.defaultValue != nil && !g.hasUnset:
+		g.logf("writing default statement to assign to default value")
 		g.Printf("\t\t*%s = %s\n", recv, g.defaultValue.Name)
 	default:
+		g.logf("writing default statement to return error")
 		g.Printf("\t\treturn fmt.Errorf(\"failed to %s %s value: unrecognized value `%%v`\", %s)\n", method, typeName, assgnVar)
 	}
 }
@@ -308,8 +353,10 @@ func (g *Generator) writeReadCaseStatement(recv string, values []Value, kind Val
 	var stmnt string
 	switch {
 	case (kind == TypeSigned || kind == TypeUnsigned) && g.useString && g.isStringer:
+		g.logf("writing multi-case statement")
 		stmnt = WriteMultiCaseStatement(values, recv)
 	default:
+		g.logf("writing single case statement")
 		stmnt = WriteReadSingleCaseStatement(values, recv, assgnVar, typeName, kind)
 
 	}
@@ -326,10 +373,13 @@ func (g *Generator) writeScannerTypeAssertionStmnt(method string, assgnVar strin
 
 func (g *Generator) writeUnmarshalerTypeConversionStmnt(assgnVar string, convType string, method string, typeName string) {
 	g.Printf("\tstr := string(data)\n")
+	g.logf("converting []byte to string")
 	if convType == "int" {
 		g.Printf("\tv, err := strconv.ParseInt(str, 10, 64)\n")
+		g.logf("using strconv.ParseInt")
 	} else if convType == "uint" {
 		g.Printf("\tv, err := strconv.ParseUint(str, 10, 64)\n")
+		g.logf("using strconv.ParseUint")
 	}
 	if convType == "uint" || convType == "int" {
 		g.Printf("\tif err != nil {\n")

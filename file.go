@@ -15,7 +15,7 @@ type File struct {
 	values       []Value
 	isStringer   bool
 	receiverName string
-	noEmpty      bool
+	hasUnset     bool
 }
 
 func (f *File) GenDecl(node ast.Node) bool {

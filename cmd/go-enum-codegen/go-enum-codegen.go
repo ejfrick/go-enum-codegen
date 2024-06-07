@@ -21,6 +21,7 @@ var (
 	flagJsonOnly     bool
 	flagSQLOnly      bool
 	flagUseStringer  bool
+	flagDebug        bool
 )
 
 func errExitf(format string, args ...any) {
@@ -43,6 +44,7 @@ func main() {
 	flag.BoolVar(&flagJsonOnly, "json", false, "generate only json.Marshaler and json.Unmarshaler methods; default false")
 	flag.BoolVar(&flagSQLOnly, "sql", false, "generate only sql.Scanner and driver.Value methods; default false")
 	flag.BoolVar(&flagUseStringer, "stringer", false, "use the String() method of the enum instead of the underlying integer value; default false")
+	flag.BoolVar(&flagDebug, "debug", false, "output debug information about the tool")
 
 	flag.Parse()
 
@@ -93,15 +95,20 @@ func main() {
 	}
 
 	var opts []goenumcodegen.Opt
-	switch {
-	case flagJsonOnly:
+	if flagJsonOnly {
 		opts = append(opts, goenumcodegen.WithOnlyJsonMethods())
-	case flagSQLOnly:
+	}
+	if flagSQLOnly {
 		opts = append(opts, goenumcodegen.WithOnlySQLMethods())
-	case flagErrOnUnk:
+	}
+	if flagErrOnUnk {
 		opts = append(opts, goenumcodegen.WithErrorOnUnknown())
-	case flagUseStringer:
+	}
+	if flagUseStringer {
 		opts = append(opts, goenumcodegen.WithUseStringer())
+	}
+	if flagDebug {
+		opts = append(opts, goenumcodegen.WithDebug())
 	}
 
 	g := goenumcodegen.NewGenerator(opts...)
