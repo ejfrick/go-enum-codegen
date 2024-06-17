@@ -118,14 +118,14 @@ func main() {
 		errExitf("error parsing package: %v", err)
 	}
 
-	g.WritePreamble(os.Args[1:])
-
 	for _, typeName := range typeList {
 		err := g.Generate(typeName)
 		if err != nil {
 			errExitf("error generating enum code for type %s: %v", typeName, err)
 		}
 	}
+
+	g.WritePreambleAndImports(os.Args[1:])
 
 	src, err := g.Format()
 	if err != nil {
